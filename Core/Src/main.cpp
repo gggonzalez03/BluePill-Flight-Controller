@@ -560,10 +560,10 @@ void UpdateMotorSpeeds(struct control_variables *altitude, struct control_variab
 	float p4 = (1000 - thrust) * -1 * (percentageYaw - percentageRoll - percentagePitch) + thrust;
 
 	// Propeller angular velocities cannot be nagative.
-	htim2.Instance->CCR1 = p1 > 0 ? p1 : 0;
+	htim2.Instance->CCR4 = p1 > 0 ? p1 : 0;
 	htim2.Instance->CCR2 = p2 > 0 ? p2 : 0;
 	htim2.Instance->CCR3 = p3 > 0 ? p3 : 0;
-	htim2.Instance->CCR4 = p4 > 0 ? p4 : 0;
+	htim2.Instance->CCR1 = p4 > 0 ? p4 : 0;
 
 }
 
