@@ -132,7 +132,8 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
 #ifdef UART_DEBUGGING
-  ConsoleLog("Power on\r\n");
+  sprintf(log_buffer, "Power on\r\n");
+  ConsoleLog(log_buffer);
 #endif
   HAL_Delay(1000);
   uint8_t whoami = mpu9250.readByte(MPU9250_ADDRESS, WHO_AM_I_MPU9250);  // Read WHO_AM_I register for MPU-9250
