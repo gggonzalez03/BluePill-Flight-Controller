@@ -37,11 +37,33 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+struct control_variables {
+	float p_c, i_c, d_c; 	// PID constants
+	float output, integral, derivative, bias;
+	float error;
+	float error_prior, integral_prior;
+	float current_state;
+	uint8_t clamp;
+};
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define ALTP						(1)
+#define ALTI						(0)
+#define ALTD						(0)
+
+#define YAWP						(1)
+#define YAWI						(0)
+#define YAWD						(0)
+
+#define PITCHP					(1)
+#define PITCHI					(0)
+#define PITCHD					(0)
+
+#define ROLLP						(1)
+#define ROLLI						(0)
+#define ROLLD						(0)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -67,7 +89,8 @@ static void MX_TIM2_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
-
+void UpdateMotorSpeeds(struct control_variables *altitude, struct control_variables *yaw, struct control_variables *pitch, struct control_variables *roll);
+void CalculatePIDControlOutput(struct control_variables *ctrl, float commanded_state, int iteration_time);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -191,6 +214,38 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+
+	// PID pseudocode found in http://robotsforroboticists.com/pid-control/
+	struct control_variables altitude_ctrl;
+	struct control_variables yaw_ctrl;
+	struct control_variables pitch_ctrl;
+	struct control_variables roll_ctrl;
+
+	// Altitude control init
+	altitude_ctrl.p_c = ALTP;
+	altitude_ctrl.i_c = ALTI;
+	altitude_ctrl.d_c = ALTD;
+	altitude_ctrl.error_prior = 0;
+	altitude_ctrl.error = 0;
+	altitude_ctrl.bias = 0;
+
+	// Yaw control init
+	yaw_ctrl.p_c = YAWP;
+	yaw_ctrl.i_c = YAWI;
+	yaw_ctrl.d_c = YAWD;
+	yaw_ctrl.error_prior = 0;
+	yaw_ctrl.error = 0;
+	yaw_ctrl.bias = 0;
+
+	// Pitch and roll control init
+	pitch_ctrl.p_c = roll_ctrl.p_c = PITCHP;
+	pitch_ctrl.i_c = roll_ctrl.i_c = PITCHI;
+	pitch_ctrl.d_c = roll_ctrl.d_c = PITCHD;
+	pitch_ctrl.error_prior = roll_ctrl.error_prior = 0;
+	pitch_ctrl.integral_prior = roll_ctrl.integral_prior = 0;
+	pitch_ctrl.error = roll_ctrl.error = 0;
+	pitch_ctrl.bias = roll_ctrl.bias = 0;
+
   while (1)
   {
   	if(mpu9250.readByte(MPU9250_ADDRESS, INT_STATUS) & 0x01)
@@ -232,6 +287,12 @@ int main(void)
 		yaw   -= 13.8f; // Declination at Danville, California is 13 degrees 48 minutes and 47 seconds on 2014-04-04
 		roll  *= 180.0f / PI;
 
+		// Update current_state's in control variables
+		altitude_ctrl.current_state = altitude;
+		yaw_ctrl.current_state = yaw;
+		pitch_ctrl.current_state = pitch;
+		roll_ctrl.current_state = roll;
+
 
 		bmp280_get_uncomp_data(&ucomp_data, &bmp);
 		bmp280_get_comp_temp_32bit(&temp, ucomp_data.uncomp_temp, &bmp);
@@ -243,31 +304,13 @@ int main(void)
 		ConsoleLog((char*)log_buffer);
 #endif
 
-		htim2.Instance->CCR1 = 0;
-		htim2.Instance->CCR2 = 0;
-		htim2.Instance->CCR3 = 0;
-		htim2.Instance->CCR4 = 0;
+		int iteration_time = 1;
+		CalculatePIDControlOutput(&altitude_ctrl, 10, iteration_time);
+		CalculatePIDControlOutput(&yaw_ctrl, 0, iteration_time);
+		CalculatePIDControlOutput(&pitch_ctrl, 0, iteration_time);
+		CalculatePIDControlOutput(&roll_ctrl, 0, iteration_time);
 
-		for (int i = 0; i < 100; i++)
-		{
-			htim2.Instance->CCR1 += 100;
-			htim2.Instance->CCR2 += 100;
-			htim2.Instance->CCR3 += 100;
-			htim2.Instance->CCR4 += 100;
-			HAL_Delay(100);
-		}
-
-		htim2.Instance->CCR1 = 0;
-		htim2.Instance->CCR2 = 0;
-		htim2.Instance->CCR3 = 0;
-		htim2.Instance->CCR4 = 0;
-
-		HAL_Delay(1000);
-
-//		htim2.Instance->CCR1 = 10000;
-//		htim2.Instance->CCR2 = 10000;
-//		htim2.Instance->CCR3 = 10000;
-//		htim2.Instance->CCR4 = 10000;
+		UpdateMotorSpeeds(&altitude_ctrl, &yaw_ctrl, &pitch_ctrl, &roll_ctrl);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -490,7 +533,56 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+void UpdateMotorSpeeds(struct control_variables *altitude, struct control_variables *yaw, struct control_variables *pitch, struct control_variables *roll)
+{
+	/* TODO:
+	 * Real motor mixing algorithm based on the drone geometry should be applied here.
+	 * PID controls also have to be tuned and implemented.
+	 * Over-current protection algorithm.
+	 * Vertical thrust preservation - means increasing overall thrust to maintain height
+	 * while pitching or rolling.
+	 * Cap overall current draw.
+	 * Cap individual motor voltage. Priority: thrust, roll, pitch, then yaw.
+	 * Anti-windup for the integrator and low pass filter for the differentiator
+	*/
 
+	int thrust = altitude->output;
+	float percentagePitch = pitch->output / 90 / 2;
+	float percentageRoll = roll->output / 90 / 2;
+	float percentageYaw = yaw->output / 90 / 2;
+	percentageYaw = 0;
+
+
+	float p1 = (1000 - thrust) * -1 * (percentagePitch - percentageYaw - percentageRoll) + thrust;
+	float p2 = (1000 - thrust) * -1 * (percentageYaw + percentageRoll + percentagePitch) + thrust;
+	float p3 = (1000 - thrust) * -1 * (percentageRoll - percentageYaw - percentagePitch) + thrust;
+	float p4 = (1000 - thrust) * -1 * (percentageYaw - percentageRoll - percentagePitch) + thrust;
+
+	// Propeller angular velocities cannot be nagative.
+	htim2.Instance->CCR1 = p1 > 0 ? p1 : 0;
+	htim2.Instance->CCR2 = p2 > 0 ? p2 : 0;
+	htim2.Instance->CCR3 = p3 > 0 ? p3 : 0;
+	htim2.Instance->CCR4 = p4 > 0 ? p4 : 0;
+
+}
+
+void CalculatePIDControlOutput(struct control_variables *ctrl, float commanded_state, int iteration_time)
+{
+	/* TODO:
+	 * Add derivative noise filter
+	 * Implement integral clamping conditions
+	 */
+	ctrl->error = commanded_state - ctrl->current_state;
+
+	if (ctrl->clamp == 0)
+		ctrl->integral = ctrl->integral_prior + ctrl->error * iteration_time;
+
+	ctrl->derivative = (ctrl->error - ctrl->error_prior) / iteration_time;
+	ctrl->output = (ctrl->p_c * ctrl->error) + (ctrl->i_c * ctrl->integral) + (ctrl->d_c * ctrl->derivative) + ctrl->bias;
+
+	ctrl->error_prior = ctrl->error;
+	ctrl->integral_prior = ctrl->integral;
+}
 /* USER CODE END 4 */
 
  /**
