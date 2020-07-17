@@ -29,7 +29,10 @@
 #include "bmp280.h"
 #include "bmp_porting_api.h"
 
-#include "eprintf.h"
+//#define UART_DEBUGGING
+#ifdef UART_DEBUGGING
+#include <stdio.h>
+#endif
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -105,7 +108,9 @@ int main(void)
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
+#ifdef UART_DEBUGGING
   ConsoleLog("Power on\r\n");
+#endif
   HAL_Delay(1000);
   uint8_t whoami = mpu9250.readByte(MPU9250_ADDRESS, WHO_AM_I_MPU9250);  // Read WHO_AM_I register for MPU-9250
 
@@ -233,8 +238,10 @@ int main(void)
 		bmp280_get_comp_pres_64bit(&pres32, ucomp_data.uncomp_press, &bmp);
 
 		altitude = 44330 * (1.0 - pow((float)(pres32 >> 8) / 1006.1, 0.1903)) * 3.28084;
+#ifdef UART_DEBUGGING
 		sprintf((char*)log_buffer, "Altitude: %f\r\n", altitude - altitudeOffset);
 		ConsoleLog((char*)log_buffer);
+#endif
 
 		htim2.Instance->CCR1 = 0;
 		htim2.Instance->CCR2 = 0;
