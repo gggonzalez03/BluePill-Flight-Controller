@@ -2,7 +2,7 @@
 Mcu.Family=STM32F1
 RCC.PLLSourceVirtual=RCC_PLLSOURCE_HSE
 ProjectManager.MainLocation=Core/Src
-ADC1.AWD1LowThreshold=1000
+ADC1.AWD1LowThreshold=2923
 NVIC.ADC1_2_IRQn=true\:0\:0\:false\:false\:true\:true\:true
 RCC.MCOFreq_Value=72000000
 ProjectManager.ProjectFileName=BluePill Flight Controller.ioc

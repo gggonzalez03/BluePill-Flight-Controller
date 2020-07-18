@@ -82,7 +82,7 @@ UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 uint8_t battery_low = 0;
-uint16_t battery_voltage;
+float battery_voltage;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -300,10 +300,6 @@ int main(void)
 		bmp280_get_comp_pres_64bit(&pres32, ucomp_data.uncomp_press, &bmp);
 
 		altitude = (44330 * (1.0 - pow((float)(pres32 >> 8) / 1006.1, 0.1903)) * 3.28084) - altitudeOffset;
-#ifdef UART_DEBUGGING
-		sprintf((char*)log_buffer, "Altitude: %f\r\n", altitude);
-		ConsoleLog((char*)log_buffer);
-#endif
 
 		// Update current_state's in control variables
 		altitude_ctrl.current_state = altitude;
@@ -318,6 +314,15 @@ int main(void)
 		CalculatePIDControlOutput(&roll_ctrl, 0, iteration_time);
 
 		UpdateMotorSpeeds(&altitude_ctrl, &yaw_ctrl, &pitch_ctrl, &roll_ctrl);
+
+#ifdef UART_DEBUGGING
+		sprintf((char*)log_buffer, "Altitude: %f\r\n", altitude);
+		ConsoleLog((char*)log_buffer);
+
+		battery_voltage = HAL_ADC_GetValue(&hadc1) * 0.001047542305;
+		sprintf(log_buffer, "Battery voltage %f\r\n", battery_voltage);
+		ConsoleLog(log_buffer);
+#endif
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -415,7 +420,7 @@ static void MX_ADC1_Init(void)
   */
   AnalogWDGConfig.WatchdogMode = ADC_ANALOGWATCHDOG_SINGLE_REG;
   AnalogWDGConfig.HighThreshold = 4095;
-  AnalogWDGConfig.LowThreshold = 1000;
+  AnalogWDGConfig.LowThreshold = 2923;
   AnalogWDGConfig.Channel = ADC_CHANNEL_9;
   AnalogWDGConfig.ITMode = ENABLE;
   if (HAL_ADC_AnalogWDGConfig(&hadc1, &AnalogWDGConfig) != HAL_OK)
@@ -669,8 +674,8 @@ void HAL_ADC_LevelOutOfWindowCallback(ADC_HandleTypeDef* hadc)
 	/* TODO:
 	 * Convert raw ADC value to voltage
 	 */
-	battery_voltage = HAL_ADC_GetValue(hadc);
-	sprintf(log_buffer, "Battery low %d\r\n", battery_voltage);
+	battery_voltage = HAL_ADC_GetValue(hadc) * 0.001047542305;
+	sprintf(log_buffer, "Battery low %f\r\n", battery_voltage);
 	ConsoleLog(log_buffer);
 #endif
 
