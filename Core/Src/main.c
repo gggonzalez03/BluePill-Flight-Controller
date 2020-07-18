@@ -39,10 +39,10 @@
 /* USER CODE BEGIN PTD */
 struct control_variables {
 	float p_c, i_c, d_c; 	// PID constants
-	float output, integral, derivative, bias;
-	float error;
-	float error_prior, integral_prior;
-	float current_state;
+	float output = 0, integral = 0, derivative = 0, bias = 0;
+	float error = 0;
+	float error_prior = 0, integral_prior = 0;
+	float current_state, commanded_state = 0;
 	uint8_t clamp;
 };
 /* USER CODE END PTD */
@@ -94,7 +94,7 @@ static void MX_USART1_UART_Init(void);
 static void MX_ADC1_Init(void);
 /* USER CODE BEGIN PFP */
 void UpdateMotorSpeeds(struct control_variables *altitude, struct control_variables *yaw, struct control_variables *pitch, struct control_variables *roll);
-void CalculatePIDControlOutput(struct control_variables *ctrl, float commanded_state, int iteration_time);
+void CalculatePIDControlOutput(struct control_variables *ctrl, int iteration_time);
 
 void HAL_ADC_LevelOutOfWindowCallback(ADC_HandleTypeDef* hadc);
 /* USER CODE END PFP */
@@ -233,29 +233,34 @@ int main(void)
 	altitude_ctrl.p_c = ALTP;
 	altitude_ctrl.i_c = ALTI;
 	altitude_ctrl.d_c = ALTD;
-	altitude_ctrl.error_prior = 0;
-	altitude_ctrl.error = 0;
-	altitude_ctrl.bias = 0;
 
 	// Yaw control init
 	yaw_ctrl.p_c = YAWP;
 	yaw_ctrl.i_c = YAWI;
 	yaw_ctrl.d_c = YAWD;
-	yaw_ctrl.error_prior = 0;
-	yaw_ctrl.error = 0;
-	yaw_ctrl.bias = 0;
 
 	// Pitch and roll control init
 	pitch_ctrl.p_c = roll_ctrl.p_c = PITCHP;
 	pitch_ctrl.i_c = roll_ctrl.i_c = PITCHI;
 	pitch_ctrl.d_c = roll_ctrl.d_c = PITCHD;
-	pitch_ctrl.error_prior = roll_ctrl.error_prior = 0;
-	pitch_ctrl.integral_prior = roll_ctrl.integral_prior = 0;
-	pitch_ctrl.error = roll_ctrl.error = 0;
-	pitch_ctrl.bias = roll_ctrl.bias = 0;
 
-  while (!battery_low)
+  while (1)
   {
+  	/* TODO:
+  	 * This is a dummy command states. Implement a command_state gathering algorithm here.
+  	 */
+  	altitude_ctrl.commanded_state = yaw_ctrl.commanded_state = pitch_ctrl.commanded_state = roll_ctrl.commanded_state = 10;
+
+  	if (battery_low)
+  	{
+#ifdef UART_DEBUGGING
+			sprintf(log_buffer, "Starting powerdown sequence.\r\n");
+			ConsoleLog(log_buffer);
+#endif
+  		// Set all commanded_state to zero
+  		altitude_ctrl.commanded_state = yaw_ctrl.commanded_state = pitch_ctrl.commanded_state = roll_ctrl.commanded_state = 0;
+  	}
+
   	if(mpu9250.readByte(MPU9250_ADDRESS, INT_STATUS) & 0x01)
   	{
   		mpu9250.readAccelData(accelCount);  // Read the x/y/z adc values
@@ -300,10 +305,6 @@ int main(void)
 		bmp280_get_comp_pres_64bit(&pres32, ucomp_data.uncomp_press, &bmp);
 
 		altitude = (44330 * (1.0 - pow((float)(pres32 >> 8) / 1006.1, 0.1903)) * 3.28084) - altitudeOffset;
-#ifdef UART_DEBUGGING
-		sprintf((char*)log_buffer, "Altitude: %f\r\n", altitude);
-		ConsoleLog((char*)log_buffer);
-#endif
 
 		// Update current_state's in control variables
 		altitude_ctrl.current_state = altitude;
@@ -312,14 +313,17 @@ int main(void)
 		roll_ctrl.current_state = roll;
 
 		int iteration_time = 1;
-		CalculatePIDControlOutput(&altitude_ctrl, 10, iteration_time);
-		CalculatePIDControlOutput(&yaw_ctrl, 0, iteration_time);
-		CalculatePIDControlOutput(&pitch_ctrl, 0, iteration_time);
-		CalculatePIDControlOutput(&roll_ctrl, 0, iteration_time);
+		CalculatePIDControlOutput(&altitude_ctrl, iteration_time);
+		CalculatePIDControlOutput(&yaw_ctrl, iteration_time);
+		CalculatePIDControlOutput(&pitch_ctrl, iteration_time);
+		CalculatePIDControlOutput(&roll_ctrl, iteration_time);
 
 		UpdateMotorSpeeds(&altitude_ctrl, &yaw_ctrl, &pitch_ctrl, &roll_ctrl);
 
 #ifdef UART_DEBUGGING
+		sprintf((char*)log_buffer, "Altitude: %f\r\n", altitude);
+		ConsoleLog((char*)log_buffer);
+
 		battery_voltage = HAL_ADC_GetValue(&hadc1) * 0.001047542305;
 		sprintf(log_buffer, "Battery voltage %f\r\n", battery_voltage);
 		ConsoleLog(log_buffer);
@@ -328,14 +332,6 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
   }
-
-  /* TODO:
-   * Start powerdown sequence
-   */
-#ifdef UART_DEBUGGING
-  sprintf(log_buffer, "Starting powerdown sequence.\r\n");
-  ConsoleLog(log_buffer);
-#endif
   /* USER CODE END 3 */
 }
 
@@ -651,13 +647,13 @@ void UpdateMotorSpeeds(struct control_variables *altitude, struct control_variab
 	htim2.Instance->CCR1 = p4 > 0 ? p4 : 0;
 }
 
-void CalculatePIDControlOutput(struct control_variables *ctrl, float commanded_state, int iteration_time)
+void CalculatePIDControlOutput(struct control_variables *ctrl, int iteration_time)
 {
 	/* TODO:
 	 * Add derivative noise filter
 	 * Implement integral clamping conditions
 	 */
-	ctrl->error = commanded_state - ctrl->current_state;
+	ctrl->error = ctrl->commanded_state - ctrl->current_state;
 
 	if (ctrl->clamp == 0)
 		ctrl->integral = ctrl->integral_prior + ctrl->error * iteration_time;
@@ -675,7 +671,7 @@ void HAL_ADC_LevelOutOfWindowCallback(ADC_HandleTypeDef* hadc)
 	/* TODO:
 	 * Convert raw ADC value to voltage
 	 */
-	battery_voltage = HAL_ADC_GetValue(hadc) * 0.001025641023;
+	battery_voltage = HAL_ADC_GetValue(hadc) * 0.001047542305;
 	sprintf(log_buffer, "Battery low %f\r\n", battery_voltage);
 	ConsoleLog(log_buffer);
 #endif
