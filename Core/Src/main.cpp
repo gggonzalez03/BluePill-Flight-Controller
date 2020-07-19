@@ -43,7 +43,7 @@ struct control_variables {
 	float error = 0;
 	float error_prior = 0, integral_prior = 0;
 	float current_state, commanded_state = 0;
-	uint8_t clamp;
+	uint8_t saturated, clamped;
 };
 /* USER CODE END PTD */
 
@@ -646,41 +646,90 @@ void UpdateMotorSpeeds(struct control_variables *altitude, struct control_variab
 	 * Anti-windup for the integrator and low pass filter for the differentiator
 	*/
 
-	int thrust = altitude->output;
-	float percentagePitch = pitch->output / 90 / 2;
-	float percentageRoll = roll->output / 90 / 2;
-	float percentageYaw = yaw->output / 90 / 2;
-	percentageYaw = 0;
+	float thrust = altitude->output;
+	float percentagePitch = pitch->output / 2;
+	float percentageRoll = roll->output / 2;
+	float percentageYaw = yaw->output / 2;
+
+	uint8_t motion_saturated = 0;
+	uint16_t max_pwm_width = 3599;
 
 
-	float p1 = (1000 - thrust) * -1 * (percentagePitch - percentageYaw - percentageRoll) + thrust;
-	float p2 = (1000 - thrust) * -1 * (percentageYaw + percentageRoll + percentagePitch) + thrust;
-	float p3 = (1000 - thrust) * -1 * (percentageRoll - percentageYaw - percentagePitch) + thrust;
-	float p4 = (1000 - thrust) * -1 * (percentageYaw - percentageRoll - percentagePitch) + thrust;
+	float p1 = (max_pwm_width - thrust) * -1 * (percentagePitch - percentageYaw - percentageRoll) + thrust;
+	float p2 = (max_pwm_width - thrust) * -1 * (percentageYaw + percentageRoll + percentagePitch) + thrust;
+	float p3 = (max_pwm_width - thrust) * -1 * (percentageRoll - percentageYaw - percentagePitch) + thrust;
+	float p4 = (max_pwm_width - thrust) * -1 * (percentageYaw - percentageRoll - percentagePitch) + thrust;
+
+	/*
+	 * Handle saturation
+	 * To make it simple for now, if any of the motors are saturated, saturate all motions: yaw pitch roll thrust
+	 */
+	if (p1 > max_pwm_width)
+	{
+		p1 = max_pwm_width;
+		motion_saturated = 1;
+	}
+	if (p2 > max_pwm_width)
+	{
+		p2 = max_pwm_width;
+		motion_saturated = 1;
+	}
+	if (p3 > max_pwm_width)
+	{
+		p3 = max_pwm_width;
+		motion_saturated = 1;
+	}
+	if (p4 > max_pwm_width)
+	{
+		p4 = max_pwm_width;
+		motion_saturated = 1;
+	}
 
 	// Propeller angular velocities cannot be nagative.
-	htim2.Instance->CCR4 = p1 > 0 ? p1 : 0;
-	htim2.Instance->CCR2 = p2 > 0 ? p2 : 0;
-	htim2.Instance->CCR3 = p3 > 0 ? p3 : 0;
-	htim2.Instance->CCR1 = p4 > 0 ? p4 : 0;
+	htim2.Instance->CCR4 = p1 >= 0 ? p1 : 0;
+	htim2.Instance->CCR2 = p2 >= 0 ? p2 : 0;
+	htim2.Instance->CCR3 = p3 >= 0 ? p3 : 0;
+	htim2.Instance->CCR1 = p4 >= 0 ? p4 : 0;
+
+	if (motion_saturated)
+	{
+		altitude->saturated = 1;
+		yaw->saturated = 1;
+		pitch->saturated = 1;
+		roll->saturated = 1;
+	}
 }
 
 void CalculatePIDControlOutput(struct control_variables *ctrl, int iteration_time)
 {
 	/* TODO:
-	 * Add derivative noise filter
 	 * Implement integral clamping conditions
 	 */
 	ctrl->error = ctrl->commanded_state - ctrl->current_state;
 
-	if (ctrl->clamp == 0)
+	// Only integrate if the integrator is not clamped/turned off
+	if (ctrl->clamped == 0)
 		ctrl->integral = ctrl->integral_prior + ctrl->error * iteration_time;
 
-	ctrl->derivative = (ctrl->error - ctrl->error_prior) / iteration_time;
+	/* TODO:
+	 * Determine correct values for the cutoff frequency: currently 0.95 and 0.05 for 100Hz cutoff frequency
+	 */
+	ctrl->derivative = 0.95 * (ctrl->error_prior) + 0.05 * ((ctrl->error - ctrl->error_prior) / iteration_time);
 	ctrl->output = (ctrl->p_c * ctrl->error) + (ctrl->i_c * ctrl->integral) + (ctrl->d_c * ctrl->derivative) + ctrl->bias;
 
 	ctrl->error_prior = ctrl->error;
 	ctrl->integral_prior = ctrl->integral;
+
+	// If one or more of the motors are saturated and error and output are of the same sign
+	// clamp the integrator
+	if (ctrl->saturated && ((ctrl->error > 0 && ctrl->output > 0) || (ctrl->error < 0 && ctrl->output < 0)))
+	{
+		ctrl->clamped = 1;
+	}
+	else
+	{
+		ctrl->clamped = 0;
+	}
 }
 
 void HAL_ADC_LevelOutOfWindowCallback(ADC_HandleTypeDef* hadc)
