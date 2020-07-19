@@ -247,7 +247,7 @@ int main(void)
   while (1)
   {
   	/* TODO:
-  	 * This is a dummy command states. Implement a command_state gathering algorithm here.
+  	 * These are dummy command states. Implement a command_state gathering algorithm here.
   	 */
   	altitude_ctrl.commanded_state = yaw_ctrl.commanded_state = pitch_ctrl.commanded_state = roll_ctrl.commanded_state = 10;
 
@@ -257,8 +257,24 @@ int main(void)
 			sprintf(log_buffer, "Starting powerdown sequence.\r\n");
 			ConsoleLog(log_buffer);
 #endif
-  		// Set all commanded_state to zero
-  		altitude_ctrl.commanded_state = yaw_ctrl.commanded_state = pitch_ctrl.commanded_state = roll_ctrl.commanded_state = 0;
+			// Return to hovering
+			yaw_ctrl.commanded_state = yaw_ctrl.current_state;
+			pitch_ctrl.commanded_state = roll_ctrl.commanded_state = 0;
+
+  		/* TODO:
+  		 * Determine actual threshold value for az to accept as landing impact
+  		 */
+  		if (az > 1) // Shut off the propellers when landing impact is detected
+  		{
+  			htim2.Instance->CCR4 = 0;
+  			htim2.Instance->CCR2 = 0;
+  			htim2.Instance->CCR3 = 0;
+  			htim2.Instance->CCR1 = 0;
+  		}
+  		else // Continue descending
+  		{
+  			altitude_ctrl.commanded_state -= 1;
+  		}
   	}
 
   	if(mpu9250.readByte(MPU9250_ADDRESS, INT_STATUS) & 0x01)
