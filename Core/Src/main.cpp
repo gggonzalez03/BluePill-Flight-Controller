@@ -82,6 +82,8 @@ UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 uint8_t battery_low = 0;
+uint8_t is_landing = 0;
+
 float battery_voltage;
 /* USER CODE END PV */
 
@@ -251,7 +253,7 @@ int main(void)
   	 */
   	altitude_ctrl.commanded_state = yaw_ctrl.commanded_state = pitch_ctrl.commanded_state = roll_ctrl.commanded_state = 10;
 
-  	if (battery_low)
+  	if (battery_low | is_landing)
   	{
 #ifdef UART_DEBUGGING
 			sprintf(log_buffer, "Starting powerdown sequence.\r\n");
